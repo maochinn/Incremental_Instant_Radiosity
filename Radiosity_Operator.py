@@ -1,3 +1,4 @@
+import math
 import bpy
 
 from bpy.types import Operator
@@ -15,9 +16,11 @@ from mathutils import Vector, Matrix, Quaternion, geometry, Color
 from .Create_Blender_Thing import (
     createCollection,
     createLine,
+    editLine,
     createFace,
     createCustomProperty,
-    createPointCloud
+    createPointCloud,
+    editPointCloud,
 )
 from .Radiosity_Tool import (
     rayCastingObject,
@@ -29,120 +32,6 @@ from .delaunay_voronoi import(
     computeVoronoiDiagram,
     
 )
-
-# surface_adaption_strength = FloatProperty(
-#     name="Surface Adaption",
-#     description="Surface Adaption Strength",
-#     default =0.0,
-#     soft_min=0.0,soft_max=1.0,
-#     # options={'HIDDEN'},
-# )
-# phototropism_response_strength = FloatProperty(
-#     name="Phototropism Response",
-#     description="Phototropism Response Strength",
-#     soft_min=0.0,soft_max=1.0,
-#     # options={'HIDDEN'},
-# )
-# plant_depth = IntProperty(
-#     name="Plant depth",
-#     description="plant particle depth",
-#     soft_min=0, soft_max=999
-# )
-# plant_type = EnumProperty(
-#     name="Plant Type",
-#     description="only for climbing plant object type",
-#     items=(
-#         ('SEED', "seed", "plant seed"),
-#         ('PLANT', "plant", "plant particle")),
-#     default='SEED',
-#     options={'HIDDEN'},
-# )
-# Plant_object = PointerProperty(
-#     type=bpy.types.ID,
-#     name="Plant object",
-#     description="climbing plant object",
-
-# )
-
-# #####
-# # object bpy.types.Object
-# #####
-# def createParticleProperty(
-#     context, particle, sa_strength, pr_strength, depth, plant_type, childs=[], parent=None):
-#     context.view_layer.objects.active = particle
-#     if parent == None:
-#         parent = particle
-#      # refer: bpy.ops.wm.properties_add(data_path="object")
-#     from rna_prop_ui import rna_idprop_ui_create
-
-#     data_path = "object"
-#     item = eval("context.%s" % data_path)
-
-#     rna_idprop_ui_create(
-#         item, "Surface Adaption",
-#         default     =sa_strength,
-#         description =surface_adaption_strength[1]['description'],
-#         soft_min    =surface_adaption_strength[1]['soft_min'],
-#         soft_max    =surface_adaption_strength[1]['soft_max'], )
-#     rna_idprop_ui_create(
-#         item, "Phototropism Response",
-#         default     =pr_strength,
-#         description =phototropism_response_strength[1]['description'],
-#         soft_min    =phototropism_response_strength[1]['soft_min'],
-#         soft_max    =phototropism_response_strength[1]['soft_max'], )
-#     rna_idprop_ui_create(
-#         item, "Plant Depth",
-#         default     =depth,
-#         description =plant_depth[1]['description'],
-#         soft_min    =plant_depth[1]['soft_min'],
-#         soft_max    =plant_depth[1]['soft_max'], )
-#     rna_idprop_ui_create(
-#         item, "Plant type",
-#         default     =plant_type)
-#     rna_idprop_ui_create(
-#         item, "childs",
-#         default     =[])
-#     rna_idprop_ui_create(
-#         item, "parent",
-#         default     =parent)
-
-
-
-# class PlantSeeding(Operator):
-#     bl_idname = "plant.seeding"
-#     bl_label = "dynamic plant seeding"
-#     bl_description = "seed plant root"
-#     bl_options = {'REGISTER', 'UNDO'}
-
-    
-#     sa_strength :surface_adaption_strength
-#     pr_strength :phototropism_response_strength
-#     depth       :plant_depth
-#     plant_type  :plant_type
-#     location    :FloatVectorProperty(name="Location", default=(0, 0, 0))
-
-#     @classmethod
-#     def poll(cls, context):
-#         return True
-            
-#     def invoke(self, context, event):
-#         wm = context.window_manager
-
-#         return wm.invoke_props_dialog(self)
-
-#     def execute(self, context):
-#         bpy.ops.mesh.primitive_uv_sphere_add(location=self.location)
-#         seed = context.active_object
-#         seed.name = "Seed"
-
-#         createParticleProperty(
-#             context, 
-#             seed, 
-#             self.sa_strength, 
-#             self.pr_strength,
-#             self.depth,
-#             self.plant_type)
-#         return {'FINISHED'}
 
 class InstantRadiosityInitialize(Operator):
     bl_idname = "radiosity.initialize"
@@ -235,6 +124,8 @@ class InstantRadiosityInitialize(Operator):
             VPL.data.keyframe_insert(data_path='color', frame = current)
             VPL.data.keyframe_insert(data_path='energy', frame = current)
 
+
+        context.view_layer.objects.active = spot_light
         return {'FINISHED'}
 
 
@@ -252,6 +143,9 @@ class InstantRadiosityUpdate(Operator):
         return self.execute(context)
         
     def execute(self, context):
+        current = context.scene.frame_current + 1
+        context.scene.frame_current = current
+
         SPL = bpy.context.active_object
         # lights = bpy.data.collections['Indirect Lights']
 
@@ -283,7 +177,7 @@ class InstantRadiosityUpdate(Operator):
         for iVPLs in invalid_VPLs:
             VPLs.remove(iVPLs)
 
-        if (invalid_VPLs != []):
+        if (invalid_VPLs == []):
             return {'FINISHED'}
 
         # Create new VPLs accroding to allotted budget.
@@ -298,15 +192,17 @@ class InstantRadiosityUpdate(Operator):
         # search min distance in all voronoi vertices
         distances = {}
         for v in vo_verts:
+            if(Vector(v).length_squared > 0.85):
+                continue
             s = 0.0
             for sample in samples:
                 s += (sample.to_2d()-Vector(v)).length
-            distances[s] = v
+            distances[s] = Vector(v)
         sort_vo_verts = [distances[k] for k in sorted(distances.keys())] 
         # maximum number for try to add 
         add_VPL_max = 10
         for i in range(add_VPL_max):
-            if (i >= len(invalid_lights)):
+            if (i >= len(invalid_VPLs)):
                 break
             if (sort_vo_verts == []):
                 break
@@ -314,8 +210,8 @@ class InstantRadiosityUpdate(Operator):
             VPL = invalid_VPLs[i]
 
             vert = sort_vo_verts.pop()
-            local_v = Vector(vert.x, vert.x, sqrt(1.0 - vert.length_squared))
-            world_v = spot_light.matrix_world @ local_v
+            local_v = Vector((vert.x, vert.y, math.sqrt(1.0 - vert.length_squared)))
+            world_v = SPL.matrix_world @ local_v
 
             intersection, intersect_ob = rayCastingMeshObjects(
                 bpy.data.objects, SPL.children, SPL.location, world_v - SPL.location)
@@ -339,10 +235,10 @@ class InstantRadiosityUpdate(Operator):
             face.select_set(True)
         bpy.ops.object.delete()
         # recompute Voronoi Diagram and intersect by a circle
-        voronoi_faces = createVoronoiDiagramByCircle(context, Voronoi_collection, samples, "Voronoi_face")
-        editPointCloud(bpy.data.objects['Sample_Points'], samples)
+        voronoi_faces, vo_verts = createVoronoiDiagramByCircle(context, Voronoi_collection, samples, "Voronoi_face")
+        createPointCloud(context, Voronoi_collection, name="Sample_Points", points=samples, dim='2D')
 
-        for face in voronoi_faces:
+        for face in voronoi_faces.values():
             createCustomProperty(context, face, "Type", 'Voronoi_Face', "face of Voronoi Diagram")
 
         # link and recompute area
@@ -353,24 +249,27 @@ class InstantRadiosityUpdate(Operator):
         # Compute intensities for VPLs.
         area_sum = 0.0
         for VPL in VPLs:
-            area_sum += VPL['Area'].data.polygons[0].area
+            if(len(VPL['Area'].data.polygons)>0):
+                area_sum += VPL['Area'].data.polygons[0].area
         
         SPL_color = Color(SPL.data.color)
         SPL_energy = SPL.data.energy
         for VPL in VPLs:
+            area = 0
+            if(len(VPL['Area'].data.polygons)>0):
+                area = VPL['Area'].data.polygons[0].area
             ob_color = Color(VPL['Hit_Object'].material_slots[0].material.diffuse_color[0:3])
             VPL.data.color = [SPL_color.r * ob_color.r, SPL_color.g * ob_color.g, SPL_color.b * ob_color.b]
-            VPL.data.energy = SPL_energy * (VPL['Area'].data.polygons[0].area / area_sum)
+            VPL.data.energy = SPL_energy * (area / area_sum)
 
-        # keyframe insert
-        current = context.scene.frame_current + 1
-        
+        # keyframe insert        
         for VPL in VPLs:
+            VPL.keyframe_insert(data_path='hide_viewport', frame = current)
             VPL.keyframe_insert(data_path='location', frame = current)
             VPL.data.keyframe_insert(data_path='color', frame = current)
             VPL.data.keyframe_insert(data_path='energy', frame = current)
 
 
-        context.scene.frame_current = current
-
+        
+        context.view_layer.objects.active = SPL
         return {'FINISHED'}

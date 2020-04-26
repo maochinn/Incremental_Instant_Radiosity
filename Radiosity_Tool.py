@@ -14,7 +14,7 @@ from .delaunay_voronoi import(
     computeVoronoiDiagram,
 )
 
-def rayCastingObject(ob, ray_origin, ray_direction):
+def rayCastingObject(ob, ray_origin, ray_direction, culling=False):
     bm = bmesh.new()
     bm.from_object(ob, bpy.context.view_layer.depsgraph)
     bm.transform(ob.matrix_world)
@@ -25,6 +25,9 @@ def rayCastingObject(ob, ray_origin, ray_direction):
     points = {}
     
     for face in bm.faces:
+        if (culling and ray_direction.dot(face.normal) > 0.0):
+            continue
+        
         intersection = geometry.intersect_ray_tri(face.verts[0].co, face.verts[1].co, face.verts[2].co, ray_direction, ray_origin)
         if (intersection):
             distance = (ray_origin - intersection).length_squared
@@ -36,13 +39,13 @@ def rayCastingObject(ob, ray_origin, ray_direction):
     else:
         return None, None
 
-def rayCastingMeshObjects(obs, ignore_obs, ray_origin, ray_direction):
+def rayCastingMeshObjects(obs, ignore_obs, ray_origin, ray_direction, culling=False):
     intersection_points = {}
     for ob in obs:
         if(ob in ignore_obs):
             continue
         if(ob.type == 'MESH'):
-            dis, pos = rayCastingObject(ob, ray_origin, ray_direction)
+            dis, pos = rayCastingObject(ob, ray_origin, ray_direction, culling)
             if(dis):
                 intersection_points[dis] = (pos, ob)
                     
@@ -101,12 +104,12 @@ def validateVPL(VPL, SPL):
     direction = (SPL.location - VPL.location).normalized()
     
     # avoid hit on vertices and no hit on face
-    direction[0] += 0.001
-    direction[1] += 0.001
-    direction[2] += 0.001
+    # direction[0] += 0.001
+    # direction[1] += 0.001
+    # direction[2] += 0.001
 
     intersection, intersect_ob = rayCastingMeshObjects(
-        bpy.data.objects, [VPL["Hit_Object"]], VPL.location, direction)
+        bpy.data.objects, [VPL["Hit_Object"]], VPL.location, direction, culling=True)
     
     if(intersection):
         if (intersect_ob.parent is SPL):
