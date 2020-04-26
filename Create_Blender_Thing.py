@@ -63,12 +63,11 @@ def createCube(collection, name, position, scale = 1.0):
 # name: str
 # head_pos: position of head is Vector(x, y, z)
 # tail_pos: position of tail is Vector(x, y, z)
-def createLine(collection, name, head_pos, tail_pos, ob=None):
+def createLine(collection, name, head_pos, tail_pos):
 
 
-    if(ob == None):
-        me = bpy.data.meshes.new(name)
-        ob = bpy.data.objects.new(name, me)
+    me = bpy.data.meshes.new(name)
+    ob = bpy.data.objects.new(name, me)
     ob.location = head_pos
     collection.objects.link(ob)
 
@@ -85,6 +84,26 @@ def createLine(collection, name, head_pos, tail_pos, ob=None):
     me.update(calc_edges = True)
 
     return ob
+
+def editLine(ob, p0, p1):
+    me = ob.data
+    ob.location = p0
+    bm = bmesh.new()   # create an empty BMesh
+    bm.from_mesh(me)
+
+    verts = [Vector((0, 0, 0)), p1-p0]
+    for v, new_v in zip(bm.verts, verts):
+        v.co = new_v
+        
+    # Finish up, write the bmesh back to the mesh
+    bm.to_mesh(me)
+    bm.free()  # free and prevent further access
+
+    me.update(calc_edges = True)
+
+    return ob
+    
+
 #   .   -
 #  /|\  1
 # /_|_\ -
@@ -151,37 +170,70 @@ def createPolyCurve(context, collection, name, points):
 
     return curve_ob
 
-# return
-# b_point:  Vecotr
-# parameter
-# t:        float, parameter[0, 1]
-# c_points: list[Vecotr], 4 control point
 
 def createPointCloud(context, collection, name, points, dim='3D'):
     bm = bmesh.new()
     if (dim == '2D'):
-        vs = [bm.verts.new(v.to_2d().to_3d()) for v in points]
+        vs = [bm.verts.new(Vector(v).to_2d().to_3d()) for v in points]
     elif (dim == '3D'):
-        vs = [bm.verts.new(v.to_3d()) for v in points]
-    #[bm.edges.new([vs[i1], vs[i2]]) for i1, i2 in edges_new]
-    #bm.faces.new([vs[face[0]], vs[face[1]], vs[face[2]]])
+        vs = [bm.verts.new(Vector(v).to_3d()) for v in points]
+
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
     bm.free()
+    
     ob = bpy.data.objects.new(name, me)
     collection.objects.link(ob)
     context.view_layer.objects.active = ob
 
     return ob
 
+def editPointCloud(ob, points):
+    me = ob.data
+    bm = bmesh.new()   # create an empty BMesh
+    bm.from_mesh(me)
+
+    # delete all verts
+    verts = [v for v in bm.verts]
+    bmesh.ops.delete(bm, geom=verts, context='VERTS')
+    # create new
+    vs = [bm.verts.new(Vector(v).to_3d()) for v in points]
+        
+    # Finish up, write the bmesh back to the mesh
+    bm.to_mesh(me)
+    bm.free()  # free and prevent further access
+
+    me.update(calc_edges = True)
+
+    return ob
+
 def createFace(context, collection, name, verts, face, loop=True):
     bm = bmesh.new()
-    # vs = [bm.verts.new(Vector(v).to_3d()) for v in verts]
+    vs = [verts[f] for f in face]
+    vs = [bm.verts.new(Vector(v).to_3d()) for v in vs]
+    vss = [vs[i] for i in range(len(vs))]
+    if (loop):
+        vss.pop()
+    bm.faces.new((vss[:]))
+    
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new(name, me)
+    collection.objects.link(ob)
 
-    # vss = []
-    # for f in face:
-    #     vss += [vs[f]]
-    # vss = [vs[f] for f in face]
+    context.view_layer.objects.active = ob
+
+    return ob
+def editFace(ob, verts, faces, loop=True):
+    me = ob.data
+    bm = bmesh.new()   # create an empty BMesh
+    bm.from_mesh(me)
+
+    # delete all verts
+    verts = [v for v in bm.verts]
+    bmesh.ops.delete(bm, geom=verts, context='VERTS')
+    # create new
     vs = [verts[f] for f in face]
     vs = [bm.verts.new(Vector(v).to_3d()) for v in vs]
     vss = [vs[i] for i in range(len(vs))]
@@ -189,16 +241,14 @@ def createFace(context, collection, name, verts, face, loop=True):
         vss.pop()
     
     bm.faces.new((vss[:]))
-    me = bpy.data.meshes.new(name)
+        
+    # Finish up, write the bmesh back to the mesh
     bm.to_mesh(me)
-    bm.free()
-    ob = bpy.data.objects.new(name, me)
-    collection.objects.link(ob)
+    bm.free()  # free and prevent further access
 
-    context.view_layer.objects.active = ob
+    me.update(calc_edges = True)
 
     return ob
-
 
 # warnning: name must be unique
 # default_value can = float, list, bpy.object, string
