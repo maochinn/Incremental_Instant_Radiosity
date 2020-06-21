@@ -13,6 +13,8 @@ from bpy.props import (
     StringProperty,
 )
 from mathutils import Vector, Matrix, Quaternion, geometry, Color
+from math import sin
+
 from .Create_Blender_Thing import (
     createCollection,
     createLine,
@@ -74,28 +76,28 @@ class InstantRadiosityInitialize(Operator):
             world_vert = spot_light.matrix_world @ vert
 
             intersection, intersect_ob = rayCastingMeshObjects(
-                bpy.data.objects, spot_light.children, spot_light.location, world_vert - spot_light.location)
+                bpy.data.objects, [], spot_light.location, world_vert - spot_light.location)
             if(intersection):
                 # add ray
-                ray = createLine(ray_collection, "ray", world_vert, intersection)
+                # ray = createLine(ray_collection, "ray", world_vert, intersection)
                 # add VPL
                 bpy.ops.object.light_add(type='POINT', radius=10, align='WORLD', location=intersection)
                 VPL = bpy.context.active_object
                 point_light_collection.objects.link(VPL)
                 bpy.context.collection.objects.unlink(VPL)
                 createCustomProperty(context, VPL, "Type", 'VPL', "virtiual point light for indirect illumination")
-                createCustomProperty(context, VPL, "Ray", ray, "virtiual point light ray")
+                # createCustomProperty(context, VPL, "Ray", ray, "virtiual point light ray")
                 createCustomProperty(context, VPL, "Hit_Object", intersect_ob, "ray hit this object")
 
                 # samples[VPL] = vert
                 samples += [vert]
                 VPLs    += [VPL]
 
-        createPointCloud(context, Voronoi_collection, name="SPL_Points", points=hs_verts, dim='2D')
+        # createPointCloud(context, Voronoi_collection, name="SPL_Points", points=hs_verts, dim='2D')
         createPointCloud(context, Voronoi_collection, name="Sample_Points", points=samples, dim='2D')
 
         # create Voronoi Diagram and intersect by a circle
-        voronoi_faces, vo_verts= createVoronoiDiagramByCircle(context, Voronoi_collection, samples, "Voronoi_face")
+        voronoi_faces, vo_verts= createVoronoiDiagramByCircle(context, Voronoi_collection, samples, "Voronoi_face", circle_radius=sin(spot_light.data.spot_size * 0.5))
         for face in voronoi_faces.values():
             createCustomProperty(context, face, "Type", 'Voronoi_Face', "face of Voronoi Diagram")
 
@@ -156,26 +158,41 @@ class InstantRadiosityUpdate(Operator):
         invalid_VPLs = []
         face_obs = []
 
-        for ob in bpy.data.objects:
-            if ('Type' in ob.keys() ):
-                if (ob['Type'] == 'VPL'):
-                    VPLs += [ob]
-                elif (ob['Type'] == 'Voronoi_Face'):
-                    face_obs += [ob]
+        # for ob in bpy.data.objects:
+        #     if ('Type' in ob.keys() ):
+        #         if (ob['Type'] == 'VPL'):
+        #             VPLs += [ob]
+        #         elif (ob['Type'] == 'Voronoi_Face'):
+        #             face_obs += [ob]
+
+        for VPL in bpy.data.collections['Indirect Lights'].all_objects.values():
+            if (VPL.hide_viewport):
+                invalid_VPLs += [VPL]
+            else:
+                VPLs += [VPL]
+        
+        # for ob in Voronoi_collection.all_objects.values():
+        #     if(ob['Type'] == 'Voronoi_Face'):
+        #         face_obs += [ob]
 
         # determine the validity of each VPL
         for VPL in VPLs:
-            intersection = validateVPL(VPL, SPL)
-            if (intersection):
-                intersection = SPL.matrix_world.inverted() @ intersection
-                samples += [intersection.to_2d().to_3d()]
+            # intersection = validateVPL(VPL, SPL)
+            # if (intersection):
+            #     intersection = SPL.matrix_world.inverted() @ intersection
+            #     samples += [intersection.to_2d().to_3d()]
+            sample_direction = validateVPL(VPL, SPL)
+            if (sample_direction):
+                samples += [sample_direction]
             else:
                 invalid_VPLs += [VPL]
                 VPL.hide_viewport = True
                 
+                
         # Remove all invalid VPLs and Possibly a number of valid ones to imporvement the distribution
-        for iVPLs in invalid_VPLs:
-            VPLs.remove(iVPLs)
+        for iVPL in invalid_VPLs:
+            if iVPL in VPLs:
+                VPLs.remove(iVPL)
 
         if (invalid_VPLs == []):
             return {'FINISHED'}
@@ -184,49 +201,71 @@ class InstantRadiosityUpdate(Operator):
 
         # delete all old Voronoi face
         bpy.ops.object.select_all(action='DESELECT')
-        for face in Voronoi_collection.all_objects:
-            face.select_set(True)
+        for ob in Voronoi_collection.all_objects:
+            ob.select_set(True)
         bpy.ops.object.delete()
         # create new Voronoi face
-        voronoi_faces, vo_verts= createVoronoiDiagramByCircle(context, Voronoi_collection, samples, "Voronoi_face")
+        sample_2d = []
+        for sample in samples:
+            sample_2d += [sample.to_2d().to_3d()]
+
+        # createPointCloud(context, Voronoi_collection, name="Sample_Points", points=sample_2d, dim='2D')
+        voronoi_faces, vo_verts= createVoronoiDiagramByCircle(context, Voronoi_collection, sample_2d, "Voronoi_face", circle_radius=sin(SPL.data.spot_size * 0.5))
+        for face in voronoi_faces.values():
+            createCustomProperty(context, face, "Type", 'Voronoi_Face', "face of Voronoi Diagram")
+
         # search min distance in all voronoi vertices
         distances = {}
-        for v in vo_verts:
-            if(Vector(v).length_squared > 0.85):
-                continue
+        for vert in vo_verts:
+            v = Vector(vert).to_3d()
+            # if(Vector(v).length_squared > 1.0):
+            #     v.normalize()
             s = 0.0
-            for sample in samples:
-                s += (sample.to_2d()-Vector(v)).length
-            distances[s] = Vector(v)
+            for sample in sample_2d:
+                s += (sample-v).length
+            distances[s] = v
         sort_vo_verts = [distances[k] for k in sorted(distances.keys())] 
+
         # maximum number for try to add 
         add_VPL_max = 10
-        for i in range(add_VPL_max):
-            if (i >= len(invalid_VPLs)):
+        # for i in range(add_VPL_max):
+        i = 0
+        # for iVPL in invalid_VPLs:
+        while(True):
+            if (invalid_VPLs == []):
+                break
+            if (i >= add_VPL_max):
                 break
             if (sort_vo_verts == []):
                 break
 
-            VPL = invalid_VPLs[i]
+            iVPL = invalid_VPLs[0]
 
             vert = sort_vo_verts.pop()
-            local_v = Vector((vert.x, vert.y, math.sqrt(1.0 - vert.length_squared)))
+            # have numerical error
+            if (vert.length_squared < 1.0):
+                local_v = Vector((vert.x, vert.y, -math.sqrt(1.0 - vert.length_squared)))
+            else:
+                local_v = Vector((vert.x, vert.y, 0.0))
+            # if (math.acos(vert @ Vector((0.0, 0.0, -1.0))) >= SPL.data.spot_size * 0.5):
+
             world_v = SPL.matrix_world @ local_v
 
             intersection, intersect_ob = rayCastingMeshObjects(
-                bpy.data.objects, SPL.children, SPL.location, world_v - SPL.location)
+                bpy.data.objects, [], SPL.location, world_v - SPL.location)
 
             if(intersection):
                 # valid
-                VPL.hide_viewport = False
-                # modify ray
-                ray = editLine(VPL["Ray"], world_v, intersection)
+                iVPL.hide_viewport = False
                 # modify VPL
-                VPL.location = intersection
-                VPL["Hit_Object"] = intersect_ob
+                iVPL.location = intersection
+                iVPL["Hit_Object"] = intersect_ob
+                invalid_VPLs.remove(iVPL)
 
-                samples += [vert]
-                VPLs    += [VPL]
+                samples += [local_v]
+                sample_2d += [local_v.to_2d().to_3d()]
+                VPLs    += [iVPL]
+                i += 1
         
 
         # delete all old Voronoi face
@@ -235,8 +274,8 @@ class InstantRadiosityUpdate(Operator):
             face.select_set(True)
         bpy.ops.object.delete()
         # recompute Voronoi Diagram and intersect by a circle
-        voronoi_faces, vo_verts = createVoronoiDiagramByCircle(context, Voronoi_collection, samples, "Voronoi_face")
-        createPointCloud(context, Voronoi_collection, name="Sample_Points", points=samples, dim='2D')
+        createPointCloud(context, Voronoi_collection, name="Sample_Points", points=sample_2d, dim='2D')
+        voronoi_faces, vo_verts = createVoronoiDiagramByCircle(context, Voronoi_collection, sample_2d, "Voronoi_face", circle_radius=sin(SPL.data.spot_size * 0.5))
 
         for face in voronoi_faces.values():
             createCustomProperty(context, face, "Type", 'Voronoi_Face', "face of Voronoi Diagram")
@@ -244,7 +283,7 @@ class InstantRadiosityUpdate(Operator):
         # link and recompute area
         for sample_idx in range(len(VPLs)):
             VPLs[sample_idx]["Area"] = voronoi_faces[sample_idx]
-            # createCustomProperty(context, VPLs[sample_idx], "Area", voronoi_faces[sample_idx], "Voronoi Face")
+            createCustomProperty(context, VPLs[sample_idx], "Area", voronoi_faces[sample_idx], "Voronoi Face")
 
         # Compute intensities for VPLs.
         area_sum = 0.0
@@ -263,13 +302,13 @@ class InstantRadiosityUpdate(Operator):
             VPL.data.energy = SPL_energy * (area / area_sum)
 
         # keyframe insert        
-        for VPL in VPLs:
+        for VPL in bpy.data.collections['Indirect Lights'].all_objects.values():
             VPL.keyframe_insert(data_path='hide_viewport', frame = current)
             VPL.keyframe_insert(data_path='location', frame = current)
             VPL.data.keyframe_insert(data_path='color', frame = current)
             VPL.data.keyframe_insert(data_path='energy', frame = current)
 
-
-        
+        # bpy.ops.object.select_all(action='DESELECT')
+        # SPL.select_set(True)
         context.view_layer.objects.active = SPL
         return {'FINISHED'}

@@ -1,6 +1,7 @@
 import bpy
 import bmesh
 from mathutils import Vector, Matrix, Quaternion, geometry
+import math
 
 from .Create_Blender_Thing import (
     createCollection,
@@ -42,7 +43,7 @@ def rayCastingObject(ob, ray_origin, ray_direction, culling=False):
 def rayCastingMeshObjects(obs, ignore_obs, ray_origin, ray_direction, culling=False):
     intersection_points = {}
     for ob in obs:
-        if(ob in ignore_obs):
+        if(ob in ignore_obs or ob.hide_get()):
             continue
         if(ob.type == 'MESH'):
             dis, pos = rayCastingObject(ob, ray_origin, ray_direction, culling)
@@ -53,22 +54,24 @@ def rayCastingMeshObjects(obs, ignore_obs, ray_origin, ray_direction, culling=Fa
         point = intersection_points[min(intersection_points)]
         return point
 
-    return None, None
+    return (None, None)
 
 def createVoronoiDiagramByCircle(context, collection, points, name, circle_location=(0, 0, 0), circle_radius=1):
+    vo_verts, vo_faces = computeVoronoiDiagram(points, 500.0, 500.0, polygonsOutput = True, formatOutput = True)
+
+    obs = {}
+    for idx, face in vo_faces.items():
+        if(face[0] == face[-1]):
+            face.pop()
+        face_ob = createFace(context, collection, name + str(idx), verts=vo_verts, face=face, loop=False)
+        obs[idx] = face_ob
+
+    bpy.ops.object.select_all(action='DESELECT')
+
     # create circle
     bpy.ops.mesh.primitive_circle_add(enter_editmode=False, location=circle_location, radius=circle_radius)
     circle = context.active_object
 
-    #
-    vo_verts, vo_faces = computeVoronoiDiagram(points, 100.0, 100.0, polygonsOutput = True, formatOutput = True)
-
-    obs = {}
-    for idx, face in vo_faces.items():
-        face_ob = createFace(context, collection, name + str(idx), verts=vo_verts, face=face, loop=True)
-        obs[idx] = face_ob
-
-    bpy.ops.object.select_all(action='DESELECT')
     #refine by circle
     circle.select_set(True)
     temp = context.active_object
@@ -76,7 +79,7 @@ def createVoronoiDiagramByCircle(context, collection, points, name, circle_locat
         context.view_layer.objects.active = ob
         ob.select_set(True)
         bpy.ops.object.mode_set(mode = 'EDIT')
-        bpy.ops.mesh.knife_project()
+        bpy.ops.mesh.knife_project(cut_through=True)
         bpy.ops.object.mode_set(mode = 'OBJECT')
         
         # delete outside polygon
@@ -91,31 +94,47 @@ def createVoronoiDiagramByCircle(context, collection, points, name, circle_locat
         ob.select_set(False)
 
     circle.select_set(False)
+
+    verts = []
+    for v in vo_verts:
+        if(Vector(v).length_squared > 1.0):
+            continue
+        verts += [Vector(v).to_3d()]
+
+    me = circle.data
+    bm = bmesh.new()   # create an empty BMesh
+    bm.from_mesh(me)
+
+    for v in bm.verts:
+        verts += [v.co.copy()]
+
     # delete circle
     circle.select_set(True)
     bpy.ops.object.delete(use_global=False)
 
-
-    return obs, vo_verts
+    return obs, verts
 
 
 
 def validateVPL(VPL, SPL):
-    direction = (SPL.location - VPL.location).normalized()
-    
-    # avoid hit on vertices and no hit on face
-    # direction[0] += 0.001
-    # direction[1] += 0.001
-    # direction[2] += 0.001
+    world_direction = SPL.location - VPL.location
+    VPL_SPL_length = world_direction.length
+    world_to_SPL_rotation = SPL.matrix_world.to_quaternion().to_matrix().inverted()
+    SPL_direction = world_to_SPL_rotation @ -world_direction
+    SPL_direction.normalize()
+
+    # over spotlight angle range
+    if (math.acos(SPL_direction @ Vector((0.0, 0.0, -1.0))) >= SPL.data.spot_size * 0.5):
+        return None
 
     intersection, intersect_ob = rayCastingMeshObjects(
-        bpy.data.objects, [VPL["Hit_Object"]], VPL.location, direction, culling=True)
-    
-    if(intersection):
-        if (intersect_ob.parent is SPL):
-            return intersection
+        bpy.data.objects, [VPL["Hit_Object"]], VPL.location, world_direction, culling=True)
 
-    return None
+    # occlusion between VPL and SPL
+    if(intersection and (intersection - VPL.location).length < VPL_SPL_length):
+        return None
+
+    return SPL_direction
 
 
     
