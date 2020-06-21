@@ -14,3 +14,5 @@ class InstantRadiosityPanel(bpy.types.Panel):
         row.operator('radiosity.initialize', text="initialize")
         row = layout.row()
         row.operator('radiosity.update', text="update")
+        row = layout.row()
+        row.operator('radiosity.animation', text="animation")

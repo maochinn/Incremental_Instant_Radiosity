@@ -16,9 +16,9 @@ bl_info = {
 import bpy
 
 from . Radiosity_Panel import InstantRadiosityPanel
-from . Radiosity_Operator import InstantRadiosityInitialize, InstantRadiosityUpdate
+from . Radiosity_Operator import InstantRadiosityInitialize, InstantRadiosityUpdate, InstantRadiosityAnimation
 
-classes = (InstantRadiosityPanel, InstantRadiosityInitialize, InstantRadiosityUpdate)
+classes = (InstantRadiosityPanel, InstantRadiosityInitialize, InstantRadiosityUpdate, InstantRadiosityAnimation)
 
 register, unregister = bpy.utils.register_classes_factory(classes)
 

@@ -41,17 +41,12 @@ class InstantRadiosityInitialize(Operator):
     bl_description = "instant radiosity custom initialize"
     bl_options = {'REGISTER', 'UNDO'}
 
-    # seeds = []
-
     @classmethod
     def poll(cls, context):
         return (
             context.active_object and context.active_object.children and context.active_object.type == 'LIGHT')
             
     def invoke(self, context, event):
-        # wm = context.window_manager
-
-        # return wm.invoke_props_dialog(self)
         return self.execute(context)
         
     def execute(self, context):
@@ -59,10 +54,8 @@ class InstantRadiosityInitialize(Operator):
         hemi_sphere = spot_light.children[0]
         
         createCustomProperty(context, spot_light, "Type", 'SPL', "spotlight for instant radiosity")
-        createCustomProperty(context, hemi_sphere, "Type", 'SPL_SIZE', "virtual spotlight ray size")
 
         point_light_collection  = createCollection(bpy.context.collection, "Indirect Lights")
-        ray_collection          = createCollection(bpy.context.collection, "Rays")
         Voronoi_collection      = createCollection(bpy.context.collection, "Voronoi Diagram")
 
         hs_verts = []
@@ -78,22 +71,17 @@ class InstantRadiosityInitialize(Operator):
             intersection, intersect_ob = rayCastingMeshObjects(
                 bpy.data.objects, [], spot_light.location, world_vert - spot_light.location)
             if(intersection):
-                # add ray
-                # ray = createLine(ray_collection, "ray", world_vert, intersection)
                 # add VPL
-                bpy.ops.object.light_add(type='POINT', radius=10, align='WORLD', location=intersection)
+                bpy.ops.object.light_add(type='POINT', radius=20, align='WORLD', location=intersection)
                 VPL = bpy.context.active_object
                 point_light_collection.objects.link(VPL)
                 bpy.context.collection.objects.unlink(VPL)
                 createCustomProperty(context, VPL, "Type", 'VPL', "virtiual point light for indirect illumination")
-                # createCustomProperty(context, VPL, "Ray", ray, "virtiual point light ray")
                 createCustomProperty(context, VPL, "Hit_Object", intersect_ob, "ray hit this object")
 
-                # samples[VPL] = vert
                 samples += [vert]
                 VPLs    += [VPL]
 
-        # createPointCloud(context, Voronoi_collection, name="SPL_Points", points=hs_verts, dim='2D')
         createPointCloud(context, Voronoi_collection, name="Sample_Points", points=samples, dim='2D')
 
         # create Voronoi Diagram and intersect by a circle
@@ -115,12 +103,12 @@ class InstantRadiosityInitialize(Operator):
         for VPL in VPLs:
             ob_color = Color(VPL['Hit_Object'].material_slots[0].material.diffuse_color[0:3])
             VPL.data.color = [SPL_color.r * ob_color.r, SPL_color.g * ob_color.g, SPL_color.b * ob_color.b]
+            # VPL.data.color = [ob_color.r, ob_color.g, ob_color.b]
             VPL.data.energy = SPL_energy * (VPL['Area'].data.polygons[0].area / area_sum)
 
         # keyframe insert
         current = context.scene.frame_current = 1 
         
-        # bpy.ops.anim.keyframe_insert_menu(type='Location')
         for VPL in VPLs:
             VPL.keyframe_insert(data_path='location', frame = current)
             VPL.data.keyframe_insert(data_path='color', frame = current)
@@ -146,10 +134,10 @@ class InstantRadiosityUpdate(Operator):
         
     def execute(self, context):
         current = context.scene.frame_current + 1
-        context.scene.frame_current = current
+        # context.scene.frame_current = current
+        bpy.context.scene.frame_set(current)
 
         SPL = bpy.context.active_object
-        # lights = bpy.data.collections['Indirect Lights']
 
         Voronoi_collection = bpy.data.collections["Voronoi Diagram"]
 
@@ -158,29 +146,14 @@ class InstantRadiosityUpdate(Operator):
         invalid_VPLs = []
         face_obs = []
 
-        # for ob in bpy.data.objects:
-        #     if ('Type' in ob.keys() ):
-        #         if (ob['Type'] == 'VPL'):
-        #             VPLs += [ob]
-        #         elif (ob['Type'] == 'Voronoi_Face'):
-        #             face_obs += [ob]
-
         for VPL in bpy.data.collections['Indirect Lights'].all_objects.values():
             if (VPL.hide_viewport):
                 invalid_VPLs += [VPL]
             else:
                 VPLs += [VPL]
-        
-        # for ob in Voronoi_collection.all_objects.values():
-        #     if(ob['Type'] == 'Voronoi_Face'):
-        #         face_obs += [ob]
 
         # determine the validity of each VPL
         for VPL in VPLs:
-            # intersection = validateVPL(VPL, SPL)
-            # if (intersection):
-            #     intersection = SPL.matrix_world.inverted() @ intersection
-            #     samples += [intersection.to_2d().to_3d()]
             sample_direction = validateVPL(VPL, SPL)
             if (sample_direction):
                 samples += [sample_direction]
@@ -218,8 +191,6 @@ class InstantRadiosityUpdate(Operator):
         distances = {}
         for vert in vo_verts:
             v = Vector(vert).to_3d()
-            # if(Vector(v).length_squared > 1.0):
-            #     v.normalize()
             s = 0.0
             for sample in sample_2d:
                 s += (sample-v).length
@@ -228,9 +199,7 @@ class InstantRadiosityUpdate(Operator):
 
         # maximum number for try to add 
         add_VPL_max = 10
-        # for i in range(add_VPL_max):
         i = 0
-        # for iVPL in invalid_VPLs:
         while(True):
             if (invalid_VPLs == []):
                 break
@@ -247,7 +216,6 @@ class InstantRadiosityUpdate(Operator):
                 local_v = Vector((vert.x, vert.y, -math.sqrt(1.0 - vert.length_squared)))
             else:
                 local_v = Vector((vert.x, vert.y, 0.0))
-            # if (math.acos(vert @ Vector((0.0, 0.0, -1.0))) >= SPL.data.spot_size * 0.5):
 
             world_v = SPL.matrix_world @ local_v
 
@@ -299,6 +267,7 @@ class InstantRadiosityUpdate(Operator):
                 area = VPL['Area'].data.polygons[0].area
             ob_color = Color(VPL['Hit_Object'].material_slots[0].material.diffuse_color[0:3])
             VPL.data.color = [SPL_color.r * ob_color.r, SPL_color.g * ob_color.g, SPL_color.b * ob_color.b]
+            # VPL.data.color = [ob_color.r, ob_color.g, ob_color.b]
             VPL.data.energy = SPL_energy * (area / area_sum)
 
         # keyframe insert        
@@ -308,7 +277,31 @@ class InstantRadiosityUpdate(Operator):
             VPL.data.keyframe_insert(data_path='color', frame = current)
             VPL.data.keyframe_insert(data_path='energy', frame = current)
 
-        # bpy.ops.object.select_all(action='DESELECT')
-        # SPL.select_set(True)
+        bpy.ops.object.select_all(action='DESELECT')
+        SPL.select_set(True)
         context.view_layer.objects.active = SPL
+
+        return {'FINISHED'}
+
+class InstantRadiosityAnimation(Operator):
+    bl_idname = "radiosity.animation"
+    bl_label = "instant radiosity compute animation"
+    bl_description = "instant radiosity compute animation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return 'Type' in context.active_object.keys() and context.active_object['Type'] == 'SPL'
+            
+    def invoke(self, context, event):
+        return self.execute(context)
+        
+    def execute(self, context):
+        SPL = bpy.context.active_object
+
+        start = context.scene.frame_current + 1
+        end = int(SPL.animation_data.action.frame_range[1]) + 1
+        for i in range(start, end):
+            bpy.ops.radiosity.update()
+
         return {'FINISHED'}
